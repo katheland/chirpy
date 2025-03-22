@@ -1,1 +1,4 @@
 out
+.env
+internal/database/*
+!internal/database/go.mod

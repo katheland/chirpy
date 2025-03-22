@@ -1,5 +1,7 @@
 package main
 
+import _ "github.com/lib/pq"
+
 import (
 	"fmt"
 	"sync/atomic"
@@ -7,15 +9,29 @@ import (
 	"encoding/json"
 	"strings"
 	"slices"
+	"internal/database"
+	"database/sql"
+	"os"
+	"github.com/joho/godotenv"
 )
 
 type apiConfig struct {
 	fileserverHits atomic.Int32
+	dbQueries *database.Queries
 }
 
 func main() {
+	godotenv.Load() // loads the .env file
+	dbURL := os.Getenv("DB_URL")
+	db, err := sql.Open("postgres", dbURL)
+	if err != nil {
+		fmt.Println("Error opening the database")
+	}
+	dbQueries := database.New(db)
+
 	apiCfg := apiConfig{}
 	apiCfg.fileserverHits.Store(0)
+	apiCfg.dbQueries = dbQueries
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/healthz", func(wri http.ResponseWriter, req *http.Request) {
 		wri.Header().Set("Content-Type", "text/plain; charset=utf-8")
