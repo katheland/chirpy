@@ -41,6 +41,7 @@ func main() {
 		respondWithString(wri, 200, fmt.Sprintf("<html><body><h1>Welcome, Chirpy Admin</h1><p>Chirpy has been visited %d times!</p></body></html>", apiCfg.fileserverHits.Load()))
 	})
 	mux.HandleFunc("POST /admin/reset", func(wri http.ResponseWriter, req *http.Request){
+		
 		if apiCfg.platform == "dev" {
 			apiCfg.metricsReset()
 			apiCfg.dbQueries.ResetUsers(req.Context())
@@ -52,6 +53,31 @@ func main() {
 
 	mux.HandleFunc("GET /api/healthz", func(wri http.ResponseWriter, req *http.Request) {
 		respondWithString(wri, 200, "OK")
+	})
+	mux.HandleFunc("GET /api/chirps", func(wri http.ResponseWriter, req *http.Request) {
+		type resParam struct {
+			ID uuid.UUID `json:"id"`
+			CreatedAt time.Time `json:"created_at"`
+			UpdatedAt time.Time `json:"updated_at"`
+			Body string `json:"body"`
+			UserID uuid.UUID `json:"user_id"`
+		}
+		chirps, err := apiCfg.dbQueries.GetAllChirps(req.Context())
+		if err != nil {
+			respondWithError(wri, 500, fmt.Sprint("Error getting chirps: %v", err))
+			return
+		}
+		output := []resParam{}
+		for _, c := range chirps {
+			output = append(output, resParam{
+				ID: c.ID,
+				CreatedAt: c.CreatedAt,
+				UpdatedAt: c.UpdatedAt,
+				Body: c.Body,
+				UserID: c.UserID,
+			})
+		}
+		respondWithJSON(wri, 200, output)
 	})
 	mux.HandleFunc("POST /api/chirps", func(wri http.ResponseWriter, req *http.Request) {
 		type reqParam struct {
@@ -80,6 +106,10 @@ func main() {
 		}
 		
 		chirp, err := apiCfg.dbQueries.CreateChirp(req.Context(), database.CreateChirpParams{Body: profanityFilter(reqBody.Body), UserID: reqBody.UserID,})
+		if err != nil {
+			respondWithError(wri, 500, fmt.Sprint("Error creating chirp: %v", err))
+			return
+		}
 		resBody := resParam{
 			ID: chirp.ID,
 			CreatedAt: chirp.CreatedAt,
