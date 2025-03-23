@@ -79,6 +79,33 @@ func main() {
 		}
 		respondWithJSON(wri, 200, output)
 	})
+	mux.HandleFunc("GET /api/chirps/{chirpID}", func(wri http.ResponseWriter, req *http.Request) {
+		type resParam struct {
+			ID uuid.UUID `json:"id"`
+			CreatedAt time.Time `json:"created_at"`
+			UpdatedAt time.Time `json:"updated_at"`
+			Body string `json:"body"`
+			UserID uuid.UUID `json:"user_id"`
+		}
+		chirpID, _ := uuid.Parse(req.PathValue("chirpID"))
+		chirp, err := apiCfg.dbQueries.GetSingleChirp(req.Context(), chirpID)
+		if err != nil {
+			if strings.Contains(fmt.Sprint(err), "no rows in result set") {
+				respondWithError(wri, 404, fmt.Sprint("Chirp not found"))
+			} else {
+				respondWithError(wri, 500, fmt.Sprint("Error getting chirp: %v", err))
+			}
+			return
+		}
+		resBody := resParam {
+			ID: chirp.ID,
+			CreatedAt: chirp.CreatedAt,
+			UpdatedAt: chirp.UpdatedAt,
+			Body: chirp.Body,
+			UserID: chirp.UserID,
+		}
+		respondWithJSON(wri, 200, resBody)
+	})
 	mux.HandleFunc("POST /api/chirps", func(wri http.ResponseWriter, req *http.Request) {
 		type reqParam struct {
 			Body string `json:"body"`
