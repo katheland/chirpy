@@ -12,12 +12,15 @@ import (
 	"internal/database"
 	"database/sql"
 	"os"
+	"time"
 	"github.com/joho/godotenv"
+	"github.com/google/uuid"
 )
 
 type apiConfig struct {
 	fileserverHits atomic.Int32
 	dbQueries *database.Queries
+	platform string
 }
 
 func main() {
@@ -32,22 +35,23 @@ func main() {
 	apiCfg := apiConfig{}
 	apiCfg.fileserverHits.Store(0)
 	apiCfg.dbQueries = dbQueries
+	apiCfg.platform = os.Getenv("PLATFORM")
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /api/healthz", func(wri http.ResponseWriter, req *http.Request) {
-		wri.Header().Set("Content-Type", "text/plain; charset=utf-8")
-		wri.WriteHeader(200)
-		wri.Write([]byte("OK"))
-	})
 	mux.HandleFunc("GET /admin/metrics", func(wri http.ResponseWriter, req *http.Request){
-		wri.Header().Set("Content-Type", "text/html; charset=utf-8")
-		wri.WriteHeader(200)
-		wri.Write([]byte(fmt.Sprintf("<html><body><h1>Welcome, Chirpy Admin</h1><p>Chirpy has been visited %d times!</p></body></html>", apiCfg.fileserverHits.Load())))
+		respondWithString(wri, 200, fmt.Sprintf("<html><body><h1>Welcome, Chirpy Admin</h1><p>Chirpy has been visited %d times!</p></body></html>", apiCfg.fileserverHits.Load()))
 	})
 	mux.HandleFunc("POST /admin/reset", func(wri http.ResponseWriter, req *http.Request){
-		apiCfg.metricsReset()
-		wri.Header().Set("Content-Type", "text/plain; charset=utf-8")
-		wri.WriteHeader(200)
-		wri.Write([]byte(fmt.Sprintf("Reset! Hits: %v", apiCfg.fileserverHits.Load())))
+		if apiCfg.platform == "dev" {
+			apiCfg.metricsReset()
+			apiCfg.dbQueries.ResetUsers(req.Context())
+			respondWithString(wri, 200, "Reset")
+		} else {
+			respondWithError(wri, 403, "Forbidden")
+		}
+	})
+
+	mux.HandleFunc("GET /api/healthz", func(wri http.ResponseWriter, req *http.Request) {
+		respondWithString(wri, 200, "OK")
 	})
 	mux.HandleFunc("POST /api/validate_chirp", func(wri http.ResponseWriter, req *http.Request) {
 		type reqParam struct {
@@ -74,6 +78,39 @@ func main() {
 		resBody := resParam{CleanedBody: profanityFilter(reqBody.Body)}
 		respondWithJSON(wri, 200, resBody)
 	})
+	mux.HandleFunc("POST /api/users", func(wri http.ResponseWriter, req *http.Request) {
+		type reqParam struct {
+			Email string `json:"email"`
+		}
+		type resParam struct {
+			ID uuid.UUID `json:"id"`
+			CreatedAt time.Time `json:"created_at"`
+			UpdatedAt time.Time `json:"updated_at"`
+			Email string `json:"email"`
+		}
+
+		// first decode the request
+		decoder := json.NewDecoder(req.Body)
+		reqBody := reqParam{}
+		err := decoder.Decode(&reqBody)
+		if err != nil {
+			respondWithError(wri, 500, fmt.Sprint("Error decoding request: %v", err))
+			return
+		}
+
+		user, err := apiCfg.dbQueries.CreateUser(req.Context(), reqBody.Email)
+		if err != nil {
+			respondWithError(wri, 500, fmt.Sprint("Error creating user: %v", err))
+			return
+		}
+		resBody := resParam{
+			ID: user.ID,
+			CreatedAt: user.CreatedAt,
+			UpdatedAt: user.CreatedAt,
+			Email: user.Email,
+		}
+		respondWithJSON(wri, 201, resBody)
+	})
 
 	mux.Handle("/app/", apiCfg.middlewareMetricsInc(http.StripPrefix("/app", http.FileServer(http.Dir(".")))))
 	
@@ -95,30 +132,6 @@ func (cfg *apiConfig) middlewareMetricsInc(next http.Handler) http.Handler {
 // resets the metrics counter to 0
 func (cfg *apiConfig) metricsReset() {
 	cfg.fileserverHits.Store(0)
-}
-
-// marshals the JSON data and sends it in response
-func respondWithJSON(wri http.ResponseWriter, code int, payload interface{}) {
-	dat, err := json.Marshal(payload)
-	if err != nil {
-		respondWithError(wri, 500, fmt.Sprint("Error marshalling response: %v", err))
-		return
-	}
-	wri.Header().Set("Content-Type", "application/json")
-	wri.WriteHeader(code)
-	wri.Write(dat)
-}
-
-// sends an error response
-func respondWithError(wri http.ResponseWriter, code int, msg string) {
-	type errorResp struct {
-		Error string `json:"error"`
-	}
-	res := errorResp{Error: msg}
-	ret, _ := json.Marshal(res)
-	wri.Header().Set("Content-Type", "application/json")
-	wri.WriteHeader(code)
-	wri.Write(ret)
 }
 
 // cleans a string to replace disallowed words with asterisks
