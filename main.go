@@ -53,12 +53,17 @@ func main() {
 	mux.HandleFunc("GET /api/healthz", func(wri http.ResponseWriter, req *http.Request) {
 		respondWithString(wri, 200, "OK")
 	})
-	mux.HandleFunc("POST /api/validate_chirp", func(wri http.ResponseWriter, req *http.Request) {
+	mux.HandleFunc("POST /api/chirps", func(wri http.ResponseWriter, req *http.Request) {
 		type reqParam struct {
 			Body string `json:"body"`
+			UserID uuid.UUID `json:"user_id"`
 		}
 		type resParam struct {
-			CleanedBody string `json:"cleaned_body"`
+			ID uuid.UUID `json:"id"`
+			CreatedAt time.Time `json:"created_at"`
+			UpdatedAt time.Time `json:"updated_at"`
+			Body string `json:"body"`
+			UserID uuid.UUID `json:"user_id"`
 		}
 		
 		// first decode the request
@@ -69,14 +74,20 @@ func main() {
 			respondWithError(wri, 500, fmt.Sprint("Error decoding request: %v", err))
 			return
 		}
-
-		// then set up the response
 		if len(reqBody.Body) > 140 {
 			respondWithError(wri, 400, "Chirp is too long")
 			return
 		}
-		resBody := resParam{CleanedBody: profanityFilter(reqBody.Body)}
-		respondWithJSON(wri, 200, resBody)
+		
+		chirp, err := apiCfg.dbQueries.CreateChirp(req.Context(), database.CreateChirpParams{Body: profanityFilter(reqBody.Body), UserID: reqBody.UserID,})
+		resBody := resParam{
+			ID: chirp.ID,
+			CreatedAt: chirp.CreatedAt,
+			UpdatedAt: chirp.CreatedAt,
+			Body: chirp.Body,
+			UserID: chirp.UserID,
+		}
+		respondWithJSON(wri, 201, resBody)
 	})
 	mux.HandleFunc("POST /api/users", func(wri http.ResponseWriter, req *http.Request) {
 		type reqParam struct {
