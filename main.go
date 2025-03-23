@@ -12,7 +12,6 @@ import (
 	"internal/database"
 	"database/sql"
 	"os"
-	"time"
 	"github.com/joho/godotenv"
 	"github.com/google/uuid"
 )
@@ -41,7 +40,6 @@ func main() {
 		respondWithString(wri, 200, fmt.Sprintf("<html><body><h1>Welcome, Chirpy Admin</h1><p>Chirpy has been visited %d times!</p></body></html>", apiCfg.fileserverHits.Load()))
 	})
 	mux.HandleFunc("POST /admin/reset", func(wri http.ResponseWriter, req *http.Request){
-		
 		if apiCfg.platform == "dev" {
 			apiCfg.metricsReset()
 			apiCfg.dbQueries.ResetUsers(req.Context())
@@ -55,21 +53,14 @@ func main() {
 		respondWithString(wri, 200, "OK")
 	})
 	mux.HandleFunc("GET /api/chirps", func(wri http.ResponseWriter, req *http.Request) {
-		type resParam struct {
-			ID uuid.UUID `json:"id"`
-			CreatedAt time.Time `json:"created_at"`
-			UpdatedAt time.Time `json:"updated_at"`
-			Body string `json:"body"`
-			UserID uuid.UUID `json:"user_id"`
-		}
 		chirps, err := apiCfg.dbQueries.GetAllChirps(req.Context())
 		if err != nil {
 			respondWithError(wri, 500, fmt.Sprint("Error getting chirps: %v", err))
 			return
 		}
-		output := []resParam{}
+		output := []chirpParam{}
 		for _, c := range chirps {
-			output = append(output, resParam{
+			output = append(output, chirpParam{
 				ID: c.ID,
 				CreatedAt: c.CreatedAt,
 				UpdatedAt: c.UpdatedAt,
@@ -80,13 +71,6 @@ func main() {
 		respondWithJSON(wri, 200, output)
 	})
 	mux.HandleFunc("GET /api/chirps/{chirpID}", func(wri http.ResponseWriter, req *http.Request) {
-		type resParam struct {
-			ID uuid.UUID `json:"id"`
-			CreatedAt time.Time `json:"created_at"`
-			UpdatedAt time.Time `json:"updated_at"`
-			Body string `json:"body"`
-			UserID uuid.UUID `json:"user_id"`
-		}
 		chirpID, _ := uuid.Parse(req.PathValue("chirpID"))
 		chirp, err := apiCfg.dbQueries.GetSingleChirp(req.Context(), chirpID)
 		if err != nil {
@@ -97,7 +81,7 @@ func main() {
 			}
 			return
 		}
-		resBody := resParam {
+		resBody := chirpParam {
 			ID: chirp.ID,
 			CreatedAt: chirp.CreatedAt,
 			UpdatedAt: chirp.UpdatedAt,
@@ -108,13 +92,6 @@ func main() {
 	})
 	mux.HandleFunc("POST /api/chirps", func(wri http.ResponseWriter, req *http.Request) {
 		type reqParam struct {
-			Body string `json:"body"`
-			UserID uuid.UUID `json:"user_id"`
-		}
-		type resParam struct {
-			ID uuid.UUID `json:"id"`
-			CreatedAt time.Time `json:"created_at"`
-			UpdatedAt time.Time `json:"updated_at"`
 			Body string `json:"body"`
 			UserID uuid.UUID `json:"user_id"`
 		}
@@ -137,7 +114,7 @@ func main() {
 			respondWithError(wri, 500, fmt.Sprint("Error creating chirp: %v", err))
 			return
 		}
-		resBody := resParam{
+		resBody := chirpParam{
 			ID: chirp.ID,
 			CreatedAt: chirp.CreatedAt,
 			UpdatedAt: chirp.CreatedAt,
@@ -150,13 +127,7 @@ func main() {
 		type reqParam struct {
 			Email string `json:"email"`
 		}
-		type resParam struct {
-			ID uuid.UUID `json:"id"`
-			CreatedAt time.Time `json:"created_at"`
-			UpdatedAt time.Time `json:"updated_at"`
-			Email string `json:"email"`
-		}
-
+		
 		// first decode the request
 		decoder := json.NewDecoder(req.Body)
 		reqBody := reqParam{}
@@ -171,7 +142,7 @@ func main() {
 			respondWithError(wri, 500, fmt.Sprint("Error creating user: %v", err))
 			return
 		}
-		resBody := resParam{
+		resBody := userParam{
 			ID: user.ID,
 			CreatedAt: user.CreatedAt,
 			UpdatedAt: user.CreatedAt,
