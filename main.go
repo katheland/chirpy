@@ -10,6 +10,7 @@ import (
 	"strings"
 	"slices"
 	"internal/database"
+	"internal/auth"
 	"database/sql"
 	"os"
 	"github.com/joho/godotenv"
@@ -36,9 +37,11 @@ func main() {
 	apiCfg.dbQueries = dbQueries
 	apiCfg.platform = os.Getenv("PLATFORM")
 	mux := http.NewServeMux()
+	// get number of page visits
 	mux.HandleFunc("GET /admin/metrics", func(wri http.ResponseWriter, req *http.Request){
 		respondWithString(wri, 200, fmt.Sprintf("<html><body><h1>Welcome, Chirpy Admin</h1><p>Chirpy has been visited %d times!</p></body></html>", apiCfg.fileserverHits.Load()))
 	})
+	// a dev endpoint to reset page visits and the database
 	mux.HandleFunc("POST /admin/reset", func(wri http.ResponseWriter, req *http.Request){
 		if apiCfg.platform == "dev" {
 			apiCfg.metricsReset()
@@ -48,14 +51,15 @@ func main() {
 			respondWithError(wri, 403, "Forbidden")
 		}
 	})
-
+	// get the health of the server
 	mux.HandleFunc("GET /api/healthz", func(wri http.ResponseWriter, req *http.Request) {
 		respondWithString(wri, 200, "OK")
 	})
+	// get all chirps
 	mux.HandleFunc("GET /api/chirps", func(wri http.ResponseWriter, req *http.Request) {
 		chirps, err := apiCfg.dbQueries.GetAllChirps(req.Context())
 		if err != nil {
-			respondWithError(wri, 500, fmt.Sprint("Error getting chirps: %v", err))
+			respondWithError(wri, 500, fmt.Sprintf("Error getting chirps: %v", err))
 			return
 		}
 		output := []chirpParam{}
@@ -70,6 +74,7 @@ func main() {
 		}
 		respondWithJSON(wri, 200, output)
 	})
+	// get chirp by ID
 	mux.HandleFunc("GET /api/chirps/{chirpID}", func(wri http.ResponseWriter, req *http.Request) {
 		chirpID, _ := uuid.Parse(req.PathValue("chirpID"))
 		chirp, err := apiCfg.dbQueries.GetSingleChirp(req.Context(), chirpID)
@@ -77,7 +82,7 @@ func main() {
 			if strings.Contains(fmt.Sprint(err), "no rows in result set") {
 				respondWithError(wri, 404, fmt.Sprint("Chirp not found"))
 			} else {
-				respondWithError(wri, 500, fmt.Sprint("Error getting chirp: %v", err))
+				respondWithError(wri, 500, fmt.Sprintf("Error getting chirp: %v", err))
 			}
 			return
 		}
@@ -90,6 +95,7 @@ func main() {
 		}
 		respondWithJSON(wri, 200, resBody)
 	})
+	// create a new chirp
 	mux.HandleFunc("POST /api/chirps", func(wri http.ResponseWriter, req *http.Request) {
 		type reqParam struct {
 			Body string `json:"body"`
@@ -101,7 +107,7 @@ func main() {
 		reqBody := reqParam{}
 		err := decoder.Decode(&reqBody)
 		if err != nil {
-			respondWithError(wri, 500, fmt.Sprint("Error decoding request: %v", err))
+			respondWithError(wri, 500, fmt.Sprintf("Error decoding request: %v", err))
 			return
 		}
 		if len(reqBody.Body) > 140 {
@@ -111,7 +117,7 @@ func main() {
 		
 		chirp, err := apiCfg.dbQueries.CreateChirp(req.Context(), database.CreateChirpParams{Body: profanityFilter(reqBody.Body), UserID: reqBody.UserID,})
 		if err != nil {
-			respondWithError(wri, 500, fmt.Sprint("Error creating chirp: %v", err))
+			respondWithError(wri, 500, fmt.Sprintf("Error creating chirp: %v", err))
 			return
 		}
 		resBody := chirpParam{
@@ -123,9 +129,11 @@ func main() {
 		}
 		respondWithJSON(wri, 201, resBody)
 	})
+	// create a new user
 	mux.HandleFunc("POST /api/users", func(wri http.ResponseWriter, req *http.Request) {
 		type reqParam struct {
 			Email string `json:"email"`
+			Password string `json:"password"`
 		}
 		
 		// first decode the request
@@ -133,13 +141,17 @@ func main() {
 		reqBody := reqParam{}
 		err := decoder.Decode(&reqBody)
 		if err != nil {
-			respondWithError(wri, 500, fmt.Sprint("Error decoding request: %v", err))
+			respondWithError(wri, 500, fmt.Sprintf("Error decoding request: %v", err))
 			return
 		}
 
-		user, err := apiCfg.dbQueries.CreateUser(req.Context(), reqBody.Email)
+		hashword, err := auth.HashPassword(reqBody.Password)
 		if err != nil {
-			respondWithError(wri, 500, fmt.Sprint("Error creating user: %v", err))
+			respondWithError(wri, 500, fmt.Sprintf("Error hashing password: %v", err))
+		}
+		user, err := apiCfg.dbQueries.CreateUser(req.Context(), database.CreateUserParams{Email: reqBody.Email, HashedPassword: hashword})
+		if err != nil {
+			respondWithError(wri, 500, fmt.Sprintf("Error creating user: %v", err))
 			return
 		}
 		resBody := userParam{
@@ -150,7 +162,40 @@ func main() {
 		}
 		respondWithJSON(wri, 201, resBody)
 	})
+	// login
+	mux.HandleFunc("POST /api/login", func(wri http.ResponseWriter, req *http.Request) {
+		type reqParam struct {
+			Email string `json:"email"`
+			Password string `json:"password"`
+		}
 
+		// first decode the request
+		decoder := json.NewDecoder(req.Body)
+		reqBody := reqParam{}
+		err := decoder.Decode(&reqBody)
+		if err != nil {
+			respondWithError(wri, 500, fmt.Sprintf("Error decoding request: %v", err))
+			return
+		}
+
+		user, err := apiCfg.dbQueries.GetUserByEmail(req.Context(), reqBody.Email)
+		if err != nil {
+			respondWithError(wri, 401, "Incorrect username or password")
+		}
+		err = auth.CheckPasswordHash(reqBody.Password, user.HashedPassword)
+		if err != nil {
+			respondWithError(wri, 401, "Incorrect username or password")
+		}
+		resBody := userParam{
+			ID: user.ID,
+			CreatedAt: user.CreatedAt,
+			UpdatedAt: user.CreatedAt,
+			Email: user.Email,
+		}
+		respondWithJSON(wri, 200, resBody)
+	})
+
+	// access a page on the website
 	mux.Handle("/app/", apiCfg.middlewareMetricsInc(http.StripPrefix("/app", http.FileServer(http.Dir(".")))))
 	
 	server := http.Server{

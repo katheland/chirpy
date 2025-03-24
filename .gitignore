@@ -2,3 +2,4 @@ out
 .env
 internal/database/*
 !internal/database/go.mod
+internal/auth/go.sum

@@ -17,7 +17,7 @@ func respondWithString(wri http.ResponseWriter, code int, msg string) {
 func respondWithJSON(wri http.ResponseWriter, code int, payload interface{}) {
 	dat, err := json.Marshal(payload)
 	if err != nil {
-		respondWithError(wri, 500, fmt.Sprint("Error marshalling response: %v", err))
+		respondWithError(wri, 500, fmt.Sprintf("Error marshalling response: %v", err))
 		return
 	}
 	wri.Header().Set("Content-Type", "application/json")
