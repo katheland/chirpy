@@ -4,6 +4,7 @@ import (
 	"testing"
 	"github.com/google/uuid"
 	"time"
+	"net/http"
 )
 
 func TestHash(t *testing.T) {
@@ -94,5 +95,22 @@ func TestJWT(t *testing.T) {
 			continue
 		}
 		t.Errorf("userID: %v\ntokenSecret: %v\nexpireDuration: %v checkSecret: %v\njwt: %v\nuser: %v\n This should have failed.", f.userID, f.tokenSecret, f.expiresIn, f.checkSecret, jwt, user)
+	}
+}
+
+func TestBearerToken(t *testing.T) {
+	goodTest := http.Header{}
+	goodTest.Add("Authorization", "Bearer test")
+	badTest := http.Header{}
+	goodText, err := GetBearerToken(goodTest)
+	if err != nil {
+		t.Errorf("Error in GetBearerToken: %v", err)
+	}
+	if goodText != "test" {
+		t.Errorf("GetBearerToken wrong response: %v", goodText)
+	}
+	_, err = GetBearerToken(badTest)
+	if err == nil {
+		t.Errorf("There was supposed to be an error in GetBearerToken.")
 	}
 }

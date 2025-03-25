@@ -15,12 +15,14 @@ import (
 	"os"
 	"github.com/joho/godotenv"
 	"github.com/google/uuid"
+	"time"
 )
 
 type apiConfig struct {
 	fileserverHits atomic.Int32
 	dbQueries *database.Queries
 	platform string
+	secret string
 }
 
 func main() {
@@ -36,6 +38,7 @@ func main() {
 	apiCfg.fileserverHits.Store(0)
 	apiCfg.dbQueries = dbQueries
 	apiCfg.platform = os.Getenv("PLATFORM")
+	apiCfg.secret = os.Getenv("SECRET")
 	mux := http.NewServeMux()
 	// get number of page visits
 	mux.HandleFunc("GET /admin/metrics", func(wri http.ResponseWriter, req *http.Request){
@@ -114,8 +117,20 @@ func main() {
 			respondWithError(wri, 400, "Chirp is too long")
 			return
 		}
+
+		// make sure the user is valid
+		bearer, err := auth.GetBearerToken(req.Header)
+		if err != nil {
+			respondWithError(wri, 500, fmt.Sprintf("Error getting bearer token: %v", err))
+			return
+		}
+		user, err := auth.ValidateJWT(bearer, apiCfg.secret)
+		if err != nil {
+			respondWithError(wri, 401, "Unauthorized")
+			return
+		}
 		
-		chirp, err := apiCfg.dbQueries.CreateChirp(req.Context(), database.CreateChirpParams{Body: profanityFilter(reqBody.Body), UserID: reqBody.UserID,})
+		chirp, err := apiCfg.dbQueries.CreateChirp(req.Context(), database.CreateChirpParams{Body: profanityFilter(reqBody.Body), UserID: user,})
 		if err != nil {
 			respondWithError(wri, 500, fmt.Sprintf("Error creating chirp: %v", err))
 			return
@@ -178,6 +193,7 @@ func main() {
 			return
 		}
 
+		// check authorization
 		user, err := apiCfg.dbQueries.GetUserByEmail(req.Context(), reqBody.Email)
 		if err != nil {
 			respondWithError(wri, 401, "Incorrect username or password")
@@ -186,13 +202,85 @@ func main() {
 		if err != nil {
 			respondWithError(wri, 401, "Incorrect username or password")
 		}
+
+		// get jwt token
+		dura, _ := time.ParseDuration(fmt.Sprintf("3600s"))
+		jwtToken, err := auth.MakeJWT(user.ID, apiCfg.secret, dura)
+		if err != nil {
+			respondWithError(wri, 500, fmt.Sprintf("Error getting JWT token: %v", err))
+		}
+		tokenStr, err := auth.MakeRefreshToken()
+		if err != nil {
+			respondWithError(wri, 500, fmt.Sprintf("I'm surprised. %v", err))
+		}
+		refDura, _ := time.ParseDuration(fmt.Sprintf("1440h"))
+		refreshToken, err := apiCfg.dbQueries.CreateToken(req.Context(), database.CreateTokenParams{
+			Token: tokenStr,
+			UserID: user.ID,
+			ExpiresAt: sql.NullTime{Time: time.Now().Add(refDura), Valid: true},
+		})
+		if err != nil {
+			respondWithError(wri, 500, fmt.Sprintf("Error getting refresh token: %v", err))
+		}
+		
 		resBody := userParam{
 			ID: user.ID,
 			CreatedAt: user.CreatedAt,
 			UpdatedAt: user.CreatedAt,
 			Email: user.Email,
+			Token: jwtToken,
+			RefreshToken: refreshToken.Token,
 		}
 		respondWithJSON(wri, 200, resBody)
+	})
+	// get refreshed jwt token
+	mux.HandleFunc("POST /api/refresh", func(wri http.ResponseWriter, req *http.Request) {
+		// `the json:"token"` bit is essential, yes even more essential than that x_x
+		type resParam struct {
+			Token string `json:"token"` 
+		}
+		bearer, err := auth.GetBearerToken(req.Header)
+		if err != nil {
+			respondWithError(wri, 500, fmt.Sprintf("Error getting bearer token: %v", err))
+			return
+		}
+		userWithExpiration, err := apiCfg.dbQueries.GetUserFromRefreshToken(req.Context(), bearer)
+		if err != nil {
+			respondWithError(wri, 401, fmt.Sprintf("Unauthorized: %v", err))
+			return
+		}
+		if userWithExpiration.RevokedAt.Valid == true {
+			respondWithError(wri, 401, "Revoked")
+			return
+		}
+		now := time.Now()
+		if userWithExpiration.ExpiresAt.Time.Before(now) {
+			respondWithError(wri, 401, "Expired")
+			return
+		}
+		
+		dura, _ := time.ParseDuration(fmt.Sprintf("3600s"))
+		jwtToken, err := auth.MakeJWT(userWithExpiration.UserID, apiCfg.secret, dura)
+		if err != nil {
+			respondWithError(wri, 500, fmt.Sprintf("Error getting JWT token: %v", err))
+		}
+		resBody := resParam{
+			Token: jwtToken,
+		}
+		respondWithJSON(wri, 200, resBody)
+	})
+	mux.HandleFunc("POST /api/revoke", func(wri http.ResponseWriter, req *http.Request) {
+		bearer, err := auth.GetBearerToken(req.Header)
+		if err != nil {
+			respondWithError(wri, 500, fmt.Sprintf("Error getting bearer token: %v", err))
+			return
+		}
+		err = apiCfg.dbQueries.RevokeToken(req.Context(), bearer)
+		if err != nil {
+			respondWithError(wri, 500, fmt.Sprintf("Error revoking token: %v", err))
+			return
+		}
+		wri.WriteHeader(204)
 	})
 
 	// access a page on the website
