@@ -167,10 +167,7 @@ func postLogin(wri http.ResponseWriter, req *http.Request, apiCfg apiConfig) {
 	if err != nil {
 		respondWithError(wri, 500, fmt.Sprintf("Error getting JWT token: %v", err))
 	}
-	tokenStr, err := auth.MakeRefreshToken()
-	if err != nil {
-		respondWithError(wri, 500, fmt.Sprintf("I'm surprised. %v", err))
-	}
+	tokenStr := auth.MakeRefreshToken()
 	refDura, _ := time.ParseDuration(fmt.Sprintf("1440h"))
 	refreshToken, err := apiCfg.dbQueries.CreateToken(req.Context(), database.CreateTokenParams{
 		Token: tokenStr,
@@ -294,4 +291,43 @@ func putUser(wri http.ResponseWriter, req *http.Request, apiCfg apiConfig) {
 		//RefreshToken: updatedUser.RefreshToken,
 	}
 	respondWithJSON(wri, 200, resBody)
+}
+
+func deleteChirp(wri http.ResponseWriter, req *http.Request, apiCfg apiConfig) {
+	// validate the user
+	bearer, err := auth.GetBearerToken(req.Header)
+	if err != nil {
+		respondWithError(wri, 401, fmt.Sprintf("Error getting bearer token: %v", err))
+		return
+	}
+	user, err := auth.ValidateJWT(bearer, apiCfg.secret)
+	if err != nil {
+		respondWithError(wri, 403, "JWT is invalid")
+		return
+	}
+
+	// get chirp
+	chirpID, _ := uuid.Parse(req.PathValue("chirpID"))
+	chirp, err := apiCfg.dbQueries.GetSingleChirp(req.Context(), chirpID)
+	if err != nil {
+		if strings.Contains(fmt.Sprint(err), "no rows in result set") {
+			respondWithError(wri, 404, fmt.Sprint("Chirp not found"))
+		} else {
+			respondWithError(wri, 404, fmt.Sprintf("Error getting chirp: %v", err))
+		}
+		return
+	}
+
+	// compare chirp owner to user
+	if chirp.UserID != user {
+		respondWithError(wri, 403, "Unauthorized")
+		return
+	}
+
+	// delete the chrip
+	err = apiCfg.dbQueries.DeleteSingleChirp(req.Context(), chirp.ID)
+	if err != nil {
+		respondWithError(wri, 500, fmt.Sprintf("Error deleting chirp: %v", err))
+	}
+	wri.WriteHeader(204)
 }

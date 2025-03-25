@@ -10,7 +10,6 @@ import (
 	"strings"
 	"crypto/rand"
 	"encoding/hex"
-	"strconv"
 )
 
 // turn a password into a hash
@@ -62,7 +61,8 @@ func GetBearerToken(headers http.Header) (string, error) {
 }
 
 // get a refresh token
-func MakeRefreshToken() (string, error) {
-	randNum, err := rand.Read(make([]byte, 32))
-	return hex.EncodeToString([]byte(strconv.Itoa(randNum))), err
+func MakeRefreshToken() string {
+	key := make([]byte, 32)
+	rand.Read(key)
+	return hex.EncodeToString(key)
 }
