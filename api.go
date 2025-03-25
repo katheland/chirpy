@@ -10,14 +10,28 @@ import (
 	"internal/auth"
 	"time"
 	"database/sql"
+	"sort"
 )
 
 // get all chirps
 func getChirps(wri http.ResponseWriter, req *http.Request, apiCfg apiConfig) {
-	chirps, err := apiCfg.dbQueries.GetAllChirps(req.Context())
-	if err != nil {
-		respondWithError(wri, 500, fmt.Sprintf("Error getting chirps: %v", err))
-		return
+	var chirps []database.Chirp
+	var err error
+	authorID := req.URL.Query().Get("author_id")
+	sortDir := req.URL.Query().Get("sort")
+	if authorID != "" {
+		auUU, _ := uuid.Parse(authorID)
+		chirps, err = apiCfg.dbQueries.GetChirpsByUser(req.Context(), auUU)
+		if err != nil {
+			respondWithError(wri, 500, fmt.Sprintf("Error getting chirps: %v", err))
+			return
+		}
+	} else {
+		chirps, err = apiCfg.dbQueries.GetAllChirps(req.Context())
+		if err != nil {
+			respondWithError(wri, 500, fmt.Sprintf("Error getting chirps: %v", err))
+			return
+		}
 	}
 	output := []chirpParam{}
 	for _, c := range chirps {
@@ -28,6 +42,11 @@ func getChirps(wri http.ResponseWriter, req *http.Request, apiCfg apiConfig) {
 			Body: c.Body,
 			UserID: c.UserID,
 		})
+	}
+	if sortDir == "desc" {
+		sort.Slice(output, func(i, j int) bool { return output[i].CreatedAt.Compare(output[j].CreatedAt) > 0})
+	} else if sortDir == "asc" || sortDir == "" {
+		sort.Slice(output, func(i, j int) bool { return output[i].CreatedAt.Compare(output[j].CreatedAt) < 0})
 	}
 	respondWithJSON(wri, 200, output)
 }
