@@ -131,6 +131,7 @@ func postUser(wri http.ResponseWriter, req *http.Request, apiCfg apiConfig) {
 		CreatedAt: user.CreatedAt,
 		UpdatedAt: user.CreatedAt,
 		Email: user.Email,
+		IsChirpyRed: user.IsChirpyRed,
 	}
 	respondWithJSON(wri, 201, resBody)
 }
@@ -183,6 +184,7 @@ func postLogin(wri http.ResponseWriter, req *http.Request, apiCfg apiConfig) {
 		CreatedAt: user.CreatedAt,
 		UpdatedAt: user.CreatedAt,
 		Email: user.Email,
+		IsChirpyRed: user.IsChirpyRed,
 		Token: jwtToken,
 		RefreshToken: refreshToken.Token,
 	}
@@ -287,6 +289,7 @@ func putUser(wri http.ResponseWriter, req *http.Request, apiCfg apiConfig) {
 		CreatedAt: updatedUser.CreatedAt,
 		UpdatedAt: updatedUser.CreatedAt,
 		Email: updatedUser.Email,
+		IsChirpyRed: updatedUser.IsChirpyRed,
 		//Token: updatedUser.Token,
 		//RefreshToken: updatedUser.RefreshToken,
 	}
@@ -329,5 +332,51 @@ func deleteChirp(wri http.ResponseWriter, req *http.Request, apiCfg apiConfig) {
 	if err != nil {
 		respondWithError(wri, 500, fmt.Sprintf("Error deleting chirp: %v", err))
 	}
+	wri.WriteHeader(204)
+}
+
+// handle polka webhooks
+func polkaWebhooks(wri http.ResponseWriter, req *http.Request, apiCfg apiConfig) {
+	// first we need to verify the API Key
+	key, err := auth.GetAPIKey(req.Header)
+	if err != nil {
+		respondWithError(wri, 401, fmt.Sprintf("Error getting api key: %v", err))
+		return
+	}
+	if key != apiCfg.polka_key {
+		respondWithError(wri, 401, "Unauthorized")
+		return
+	}
+
+	type reqParam struct {
+		Event string `json:"event"`
+		Data struct {
+			UserID string `json:"user_id"`
+		} `json:"data"`
+	}
+
+	// decode the request
+	decoder := json.NewDecoder(req.Body)
+	reqBody := reqParam{}
+	err = decoder.Decode(&reqBody)
+	if err != nil {
+		respondWithError(wri, 500, fmt.Sprintf("Error decoding request: %v", err))
+		return
+	}
+
+	// we don't care about anything except an upgrade
+	// (if we cared about more I'd switch this to a switch)
+	if reqBody.Event != "user.upgraded" {
+		wri.WriteHeader(204)
+		return
+	}
+
+	userID, _ := uuid.Parse(reqBody.Data.UserID)
+	err = apiCfg.dbQueries.UpgradeToRed(req.Context(), userID)
+	if err != nil {
+		respondWithError(wri, 404, "User not found")
+		return
+	}
+
 	wri.WriteHeader(204)
 }

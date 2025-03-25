@@ -19,6 +19,7 @@ type apiConfig struct {
 	dbQueries *database.Queries
 	platform string
 	secret string
+	polka_key string
 }
 
 func main() {
@@ -35,6 +36,7 @@ func main() {
 	apiCfg.dbQueries = dbQueries
 	apiCfg.platform = os.Getenv("PLATFORM")
 	apiCfg.secret = os.Getenv("SECRET")
+	apiCfg.polka_key = os.Getenv("POLKA_KEY")
 	mux := http.NewServeMux()
 	// get number of page visits
 	mux.HandleFunc("GET /admin/metrics", func(wri http.ResponseWriter, req *http.Request){
@@ -83,6 +85,10 @@ func main() {
 	})
 	mux.HandleFunc("POST /api/revoke", func(wri http.ResponseWriter, req *http.Request) {
 		revoke(wri, req, apiCfg)
+	})
+
+	mux.HandleFunc("POST /api/polka/webhooks", func(wri http.ResponseWriter, req *http.Request) {
+		polkaWebhooks(wri, req, apiCfg)
 	})
 
 	// access a page on the website
