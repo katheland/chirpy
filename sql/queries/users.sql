@@ -18,11 +18,11 @@ WHERE email = $1;
 
 -- name: UpdateEmailAndPassword :one
 UPDATE users
-SET email = $2, hashed_password = $3
+SET email = $2, hashed_password = $3, updated_at = NOW()
 WHERE id = $1
 RETURNING *;
 
 -- name: UpgradeToRed :exec
 UPDATE users
-SET is_chirpy_red = true
+SET is_chirpy_red = true, updated_at = NOW()
 WHERE id = $1;
